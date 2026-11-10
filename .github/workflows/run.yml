@@ -17,4 +17,4 @@ jobs:
       - name: Install dependencies
         run: pip install requests
       - name: Run scanner
-        run: python Scanner.py
+        run: python scanner.py
