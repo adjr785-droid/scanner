@@ -12,7 +12,7 @@ def send_telegram(message):
 
 def get_rsi(symbol):
     url = "https://www.okx.com/api/v5/market/candles"
-    params = {"instId": symbol, "bar": "1H", "limit": 20}
+    params = {"instId": symbol, "bar": "15m", "limit": 20}
     try:
         data = requests.get(url, params=params).json()["data"]
         closes = [float(k[4]) for k in data[1:]]
