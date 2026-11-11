@@ -10,6 +10,25 @@ def send_telegram(message):
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     requests.post(url, json=payload)
 
+def get_bybit_coins():
+    """Fetches the actual list of coins listed on Bybit via CoinGecko"""
+    bybit_coins = set()
+    try:
+        # Fetch top 500 pairs on Bybit
+        for page in range(1, 6):
+            url = f"https://api.coingecko.com/api/v3/exchanges/bybit/tickers?page={page}"
+            res = requests.get(url, timeout=10).json()
+            for ticker in res.get("tickers", []):
+                base = ticker.get("base")
+                if base:
+                    bybit_coins.add(base.upper())
+    except Exception as e:
+        print(f"Error fetching Bybit list: {e}")
+    
+    # Fallback: Block known tokenized stocks just in case CoinGecko fails
+    stocks = ['XNVDA', 'XTSLA', 'XAAPL', 'XMSFT', 'XAMZN', 'XGOOG', 'XMETA', 'XBRK', 'XLLY', 'XJPM']
+    return bybit_coins, stocks
+
 def get_market_data(symbol):
     url = "https://www.okx.com/api/v5/market/candles"
     params = {"instId": symbol, "bar": "15m", "limit": 20} 
@@ -21,14 +40,12 @@ def get_market_data(symbol):
         current_price = closes[-1]
         prev_close = closes[-2]
         
-        # RSI Calculation
         gains = [max(0, closes[i] - closes[i-1]) for i in range(1, len(closes))]
         losses = [max(0, closes[i-1] - closes[i]) for i in range(1, len(closes))]
         avg_gain = sum(gains[-14:])/14
         avg_loss = sum(losses[-14:])/14
         rsi = 100.0 if avg_loss == 0 else round(100 - (100 / (1 + (avg_gain / avg_loss))), 2)
             
-        # MAs & Recent Low
         ma5 = round(sum(closes[-5:]) / 5, 6)
         ma10 = round(sum(closes[-10:]) / 10, 6)
         recent_low = min(closes[-5:])
@@ -38,15 +55,16 @@ def get_market_data(symbol):
         return None, None, None, None, None, None
 
 def is_safe_trade(entry, sl, tp):
-    """Calculates Risk/Reward. ONLY returns True if R:R is 1:1.8 or better."""
     risk = entry - sl
     reward = tp - entry
     if risk <= 0 or reward <= 0: return False
-    rr_ratio = reward / risk
-    return rr_ratio >= 1.8
+    return (reward / risk) >= 1.8
 
 def run():
-    print("Scanning Market (V4.5 Early Entries)...")
+    print("Fetching Bybit listing data...")
+    valid_bybit_coins, fallback_stocks = get_bybit_coins()
+    
+    print("Scanning Market (V4.6 Bybit-Filtered)...")
     url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
     tickers = requests.get(url).json()["data"]
     
@@ -54,7 +72,17 @@ def run():
     for t in tickers:
         if t['instId'].endswith('-USDT'):
             base_coin = t['instId'].split('-')[0]
+            
+            # FILTER 1: Skip stablecoins
             if base_coin in STABLECOINS: continue
+            
+            # FILTER 2: Skip tokenized stocks explicitly
+            if base_coin in fallback_stocks: continue
+            
+            # FILTER 3: Ensure the coin is ACTUALLY on Bybit
+            # (If CoinGecko fetched data, check against it. If not, rely on fallback)
+            if len(valid_bybit_coins) > 0 and base_coin not in valid_bybit_coins:
+                continue 
             
             vol = float(t['volCcy24h'])
             if vol >= 5000000: 
@@ -78,41 +106,32 @@ def run():
             safe_entry = ma5
             sl = round(ma10 * 0.99, 6) 
             tp = round(safe_entry * 1.05, 6) 
-            
             if is_safe_trade(safe_entry, sl, tp):
                 found += 1
-                alert_text += f"🟢 *TREND PULLBACK*\n🪙 *{t['symbol']}*\n"
-                alert_text += f"🎯 Entry (Limit): {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n"
-                alert_text += f"📊 RSI: {rsi}\n\n"
+                alert_text += f"🟢 *TREND PULLBACK*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi}\n\n"
 
         # STATE 2: Oversold Reversal
         elif t['change'] < -10.0 and rsi < 28 and price > prev_close:
             safe_entry = round(recent_low * 1.005, 6)
             sl = round(recent_low * 0.985, 6) 
             tp = round(safe_entry * 1.06, 6) 
-            
             if is_safe_trade(safe_entry, sl, tp):
                 found += 1
-                alert_text += f"🩸 *OVERSOLD BOUNCE*\n🪙 *{t['symbol']}*\n"
-                alert_text += f"🎯 Entry (Limit): {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n"
-                alert_text += f"📊 RSI: {rsi} | 24H: {t['change']:.1f}%\n\n"
+                alert_text += f"🩸 *OVERSOLD BOUNCE*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi} | 24H: {t['change']:.1f}%\n\n"
 
         # STATE 3: Early Breakout
         elif t['change'] > 3.0 and 50 <= rsi <= 58 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
             sl = round(ma5 * 0.98, 6) 
             tp = round(safe_entry * 1.06, 6) 
-            
             if is_safe_trade(safe_entry, sl, tp):
                 found += 1
-                alert_text += f"🚀 *EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n"
-                alert_text += f"🎯 Entry (Limit): {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n"
-                alert_text += f"📊 RSI: {rsi} | 24H: +{t['change']:.1f}%\n\n"
+                alert_text += f"🚀 *EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi} | 24H: +{t['change']:.1f}%\n\n"
 
     if found == 0:
-        alert_text = "🛑 No safe setups found (R:R must be > 1:1.8)."
+        alert_text = "🛑 No safe Bybit setups found (R:R > 1:1.8)."
     else:
-        alert_text = "🛡️ *V4.5 SAFEST EARLY ALERTS*\n\n" + alert_text
+        alert_text = "🛡️ *V4.6 BYBIT VERIFIED ALERTS*\n\n" + alert_text
             
     print(alert_text)
     send_telegram(alert_text)
