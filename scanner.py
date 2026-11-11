@@ -18,6 +18,8 @@ def get_indicators(symbol):
         closes = [float(k[4]) for k in data[1:]] # Drop live candle
         closes.reverse()
         
+        current_price = closes[-1]
+        
         # 1. Calculate RSI
         gains = [max(0, closes[i] - closes[i-1]) for i in range(1, len(closes))]
         losses = [max(0, closes[i-1] - closes[i]) for i in range(1, len(closes))]
@@ -33,12 +35,12 @@ def get_indicators(symbol):
         ma5 = round(sum(closes[-5:]) / 5, 4)
         ma10 = round(sum(closes[-10:]) / 10, 4)
         
-        return rsi, ma5, ma10
+        return current_price, rsi, ma5, ma10
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
 def run():
-    print("Scanning Market for Pullbacks (15m + MA)...")
+    print("Scanning Market for the Ultimate Setup...")
     url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
     tickers = requests.get(url).json()["data"]
     
@@ -67,23 +69,24 @@ def run():
     
     to_check = strong_alts[:3]
     
-    pump_text = "📉 *DIP SCANNER (RSI + MA)*\n_(Check these on Bybit)_\n\n"
+    pump_text = "🎯 *ULTIMATE COMBO SCANNER*\n_(Check these on Bybit)_\n\n"
     found = 0
     
     for t in to_check:
-        rsi, ma5, ma10 = get_indicators(t['symbol'])
+        price, rsi, ma5, ma10 = get_indicators(t['symbol'])
         
-        # RULE: RSI 42-46 AND MA5 must be above MA10 (Uptrend)
-        if rsi and 42 <= rsi <= 46 and ma5 > ma10:
-            found += 1
-            pump_text += f"🟢 *{t['symbol']}*\n"
-            pump_text += f"📈 24H Change: +{t['change']:.1f}%\n"
-            pump_text += f"📊 RSI: {rsi} | MA5: {ma5} | MA10: {ma10}\n"
-            pump_text += f"💵 Volume: ${t['vol']/1000000:.1f}M | *15m*\n\n"
+        # THE ULTIMATE COMBO RULE
+        if price and rsi:
+            if 42 <= rsi <= 46 and ma5 > ma10 and price > ma5 and price > ma10:
+                found += 1
+                pump_text += f"🟢 *{t['symbol']}*\n"
+                pump_text += f"📈 24H Change: +{t['change']:.1f}%\n"
+                pump_text += f"💰 Price: {price}\n"
+                pump_text += f"📊 RSI: {rsi} | MA5: {ma5} | MA10: {ma10}\n"
+                pump_text += f"💵 Volume: ${t['vol']/1000000:.1f}M | *15m*\n\n"
     
     if found == 0:
-        # ADDED "on 15m" TO THE END HERE
-        pump_text = "🛑 No strong altcoins currently in the 42-46 RSI zone with an uptrend (MA5 > MA10) on *15m*."
+        pump_text = "🛑 No coins meet the Ultimate Combo (RSI 42-46, Price > MAs, MA5 > MA10) on *15m*."
             
     print(pump_text)
     send_telegram(pump_text)
