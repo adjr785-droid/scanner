@@ -13,7 +13,7 @@ def send_telegram(message):
 def get_bybit_coins():
     bybit_coins = set()
     try:
-        for page in range(1, 4): # Reduced pages to speed up execution
+        for page in range(1, 4):
             url = f"https://api.coingecko.com/api/v3/exchanges/bybit/tickers?page={page}"
             res = requests.get(url, timeout=10).json()
             for ticker in res.get("tickers", []):
@@ -23,7 +23,8 @@ def get_bybit_coins():
     except Exception as e:
         print(f"Error fetching Bybit list: {e}")
     
-    stocks = ['XNVDA', 'XTSLA', 'XAAPL', 'XMSFT', 'XAMZN', 'XGOOG', 'XMETA', 'XBRK', 'XLLY', 'XJPM']
+    # Hardcoded blacklist of X-Stocks on OKX
+    stocks = ['XNVDA', 'XTSLA', 'XAAPL', 'XMSFT', 'XAMZN', 'XGOOG', 'XMETA', 'XBRK', 'XLLY', 'XJPM', 'XSPCX', 'XCOIN']
     return bybit_coins, stocks
 
 def get_market_data(symbol):
@@ -61,7 +62,7 @@ def run():
     print("Fetching Bybit listing data...")
     valid_bybit_coins, fallback_stocks = get_bybit_coins()
     
-    print("Scanning Market (V4.7 Final)...")
+    print("Scanning Market (V4.9)...")
     url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
     tickers = requests.get(url).json()["data"]
     
@@ -69,12 +70,18 @@ def run():
     for t in tickers:
         if t['instId'].endswith('-USDT'):
             base_coin = t['instId'].split('-')[0]
+            
+            # Filter out OKX X-Stocks
+            if base_coin.startswith('X') and 4 <= len(base_coin) <= 6:
+                continue
+            
             if base_coin in STABLECOINS: continue
             if base_coin in fallback_stocks: continue
             if len(valid_bybit_coins) > 0 and base_coin not in valid_bybit_coins: continue 
             
             vol = float(t['volCcy24h'])
-            if vol >= 5000000: 
+            # CHANGED TO $1 MILLION VOLUME
+            if vol >= 1000000: 
                 last_price = float(t['last'])
                 open_price = float(t['open24h'])
                 change_24h = ((last_price - open_price) / open_price) * 100
@@ -82,8 +89,7 @@ def run():
     
     valid.sort(key=lambda x: x['vol'], reverse=True)
     
-    # --- THE MEGA-CAP FILTER IS BACK ---
-    # [15:50] skips the top 15 highest volume coins (BTC, ETH, etc.) and checks the next 35.
+    # Skip Top 15 Mega-Caps
     to_check = valid[15:50] 
     
     alert_text = ""
@@ -123,7 +129,7 @@ def run():
     if found == 0:
         alert_text = "🛑 No safe Bybit setups found (R:R > 1:1.8)."
     else:
-        alert_text = "🛡️ *V4.7 MEGA-CAP FILTERED ALERTS*\n\n" + alert_text
+        alert_text = "🛡️ *V4.9 $1M VOLUME ALERTS*\n\n" + alert_text
             
     print(alert_text)
     send_telegram(alert_text)
