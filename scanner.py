@@ -21,7 +21,7 @@ def get_market_data(symbol):
         current_price = closes[-1]
         prev_close = closes[-2]
         
-        # RSI
+        # RSI Calculation
         gains = [max(0, closes[i] - closes[i-1]) for i in range(1, len(closes))]
         losses = [max(0, closes[i-1] - closes[i]) for i in range(1, len(closes))]
         avg_gain = sum(gains[-14:])/14
@@ -37,8 +37,16 @@ def get_market_data(symbol):
     except Exception:
         return None, None, None, None, None, None
 
+def is_safe_trade(entry, sl, tp):
+    """Calculates Risk/Reward. ONLY returns True if R:R is 1:1.8 or better."""
+    risk = entry - sl
+    reward = tp - entry
+    if risk <= 0 or reward <= 0: return False
+    rr_ratio = reward / risk
+    return rr_ratio >= 1.8
+
 def run():
-    print("Scanning Market (V4.1 Safe Entries)...")
+    print("Scanning Market (V4.5 Early Entries)...")
     url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
     tickers = requests.get(url).json()["data"]
     
@@ -53,7 +61,6 @@ def run():
                 last_price = float(t['last'])
                 open_price = float(t['open24h'])
                 change_24h = ((last_price - open_price) / open_price) * 100
-                
                 valid.append({'symbol': t['instId'], 'vol': vol, 'change': change_24h})
     
     valid.sort(key=lambda x: x['vol'], reverse=True)
@@ -66,46 +73,46 @@ def run():
         price, prev_close, rsi, ma5, ma10, recent_low = get_market_data(t['symbol'])
         if not price: continue
         
-        # ==========================================
-        # STATE 1: Bullish Pullback (Safe Entry = MA5)
-        # ==========================================
+        # STATE 1: Bullish Pullback
         if t['change'] > 1.0 and 42 <= rsi <= 46 and price > ma5 and ma5 > ma10:
-            found += 1
-            safe_entry = ma5  # Limit order at the MA5 support
-            sl = round(ma10 * 0.995, 6) 
-            tp = round(safe_entry * 1.03, 6) # 3% target from the safe entry
-            alert_text += f"🟢 *TREND PULLBACK*\n🪙 *{t['symbol']}*\n"
-            alert_text += f"🎯 Safe Entry (Limit): {safe_entry}\n🛑 Stop Loss: {sl}\n💰 Take Profit: {tp}\n"
-            alert_text += f"📊 RSI: {rsi} | Vol: ${t['vol']/1000000:.1f}M\n\n"
+            safe_entry = ma5
+            sl = round(ma10 * 0.99, 6) 
+            tp = round(safe_entry * 1.05, 6) 
+            
+            if is_safe_trade(safe_entry, sl, tp):
+                found += 1
+                alert_text += f"🟢 *TREND PULLBACK*\n🪙 *{t['symbol']}*\n"
+                alert_text += f"🎯 Entry (Limit): {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n"
+                alert_text += f"📊 RSI: {rsi}\n\n"
 
-        # ==========================================
-        # STATE 2: Oversold Reversal (Safe Entry = Retest of Low)
-        # ==========================================
-        elif t['change'] < -8.0 and rsi < 30 and price > prev_close:
-            found += 1
-            safe_entry = round(recent_low * 1.005, 6) # Wait for a slight retest of the bottom
-            sl = round(recent_low * 0.99, 6) 
-            tp = round(ma10, 6) # Target is the MA10 resistance
-            alert_text += f"🩸 *OVERSOLD BOUNCE*\n🪙 *{t['symbol']}*\n"
-            alert_text += f"🎯 Safe Entry (Limit): {safe_entry}\n🛑 Stop Loss: {sl}\n💰 Take Profit: {tp}\n"
-            alert_text += f"📊 RSI: {rsi} | 24H: {t['change']:.1f}%\n\n"
+        # STATE 2: Oversold Reversal
+        elif t['change'] < -10.0 and rsi < 28 and price > prev_close:
+            safe_entry = round(recent_low * 1.005, 6)
+            sl = round(recent_low * 0.985, 6) 
+            tp = round(safe_entry * 1.06, 6) 
+            
+            if is_safe_trade(safe_entry, sl, tp):
+                found += 1
+                alert_text += f"🩸 *OVERSOLD BOUNCE*\n🪙 *{t['symbol']}*\n"
+                alert_text += f"🎯 Entry (Limit): {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n"
+                alert_text += f"📊 RSI: {rsi} | 24H: {t['change']:.1f}%\n\n"
 
-        # ==========================================
-        # STATE 3: Momentum Breakout (Safe Entry = MA5)
-        # ==========================================
-        elif t['change'] > 5.0 and 55 <= rsi <= 72 and price > ma5 and ma5 > ma10:
-            found += 1
-            safe_entry = ma5 # Wait for the pullback to the MA5
+        # STATE 3: Early Breakout
+        elif t['change'] > 3.0 and 50 <= rsi <= 58 and price > ma5 and ma5 > ma10:
+            safe_entry = ma5
             sl = round(ma5 * 0.98, 6) 
-            tp = round(safe_entry * 1.04, 6) # 4% target from the safe entry
-            alert_text += f"🚀 *MOMENTUM BREAKOUT*\n🪙 *{t['symbol']}*\n"
-            alert_text += f"🎯 Safe Entry (Limit): {safe_entry}\n🛑 Stop Loss: {sl}\n💰 Take Profit: {tp}\n"
-            alert_text += f"📊 RSI: {rsi} | 24H: +{t['change']:.1f}%\n\n"
+            tp = round(safe_entry * 1.06, 6) 
+            
+            if is_safe_trade(safe_entry, sl, tp):
+                found += 1
+                alert_text += f"🚀 *EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n"
+                alert_text += f"🎯 Entry (Limit): {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n"
+                alert_text += f"📊 RSI: {rsi} | 24H: +{t['change']:.1f}%\n\n"
 
     if found == 0:
-        alert_text = "🛑 No market states triggered on 15m. Waiting for setups."
+        alert_text = "🛑 No safe setups found (R:R must be > 1:1.8)."
     else:
-        alert_text = "🎯 *V4.1 SAFE ENTRY ALERTS*\n\n" + alert_text
+        alert_text = "🛡️ *V4.5 SAFEST EARLY ALERTS*\n\n" + alert_text
             
     print(alert_text)
     send_telegram(alert_text)
