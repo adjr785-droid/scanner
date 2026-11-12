@@ -1,36 +1,20 @@
-name: Crypto Automation
+name: Crypto Scanner
 on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
-  run-bots:
+  run-scanner:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
       - name: Install dependencies
-        run: pip install requests pybit
-
-      - name: Run API Test
-        env:
-          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
-          BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
-        run: python test_api.py
-
-      - name: Save Database (Commit positions.json)
-        run: |
-          git config --global user.name "GitHub Bot"
-          git config --global user.email "bot@github.com"
-          git add positions.json
-          git commit -m "Updated trade database" || echo "No changes to commit"
-          git push
+        run: pip install requests
+      - name: Run scanner
+        run: python scanner.py
