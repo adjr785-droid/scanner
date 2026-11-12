@@ -1,12 +1,14 @@
-name: Crypto Scanner
+name: Crypto Automation
 on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
-  run-scanner:
+  run-bots:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -16,5 +18,12 @@ jobs:
           python-version: '3.9'
       - name: Install dependencies
         run: pip install requests
-      - name: Run scanner
+      - name: Run Tracker and Scanner
         run: python scanner.py
+      - name: Save Memory
+        run: |
+          git config --global user.name "GitHub Bot"
+          git config --global user.email "bot@github.com"
+          git add positions.json
+          git commit -m "Updated memory" || echo "No changes"
+          git push
