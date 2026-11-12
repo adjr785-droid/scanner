@@ -1,29 +1,36 @@
-import os
-from pybit.unified_trading import HTTP
+name: Crypto Automation
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
 
-print("Connecting to Bybit...")
+jobs:
+  run-bots:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-# Initialize the session using the GitHub Secrets
-session = HTTP(
-    testnet=True, # We are testing on Testnet first!
-    api_key=os.environ.get("BYBIT_API_KEY"),
-    api_secret=os.environ.get("BYBIT_API_SECRET")
-)
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
 
-try:
-    # Ask Bybit for the wallet balance
-    response = session.get_wallet_balance(accountType="UNIFIED")
-    
-    if response["retCode"] == 0:
-        print("✅ SUCCESS! Connection established.")
-        print("Here is your Testnet Wallet Balance:")
-        
-        # Print the USDT balance
-        coins = response["result"]["list"][0]["coin"]
-        for coin in coins:
-            if coin["coin"] == "USDT":
-                print(f"💰 USDT Balance: {coin['walletBalance']}")
-    else:
-        print(f"❌ FAILED: {response['retMsg']}")
-except Exception as e:
-    print(f"❌ ERROR: {e}")
+      - name: Install dependencies
+        run: pip install requests pybit
+
+      - name: Run API Test
+        env:
+          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+          BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
+        run: python test_api.py
+
+      - name: Save Database (Commit positions.json)
+        run: |
+          git config --global user.name "GitHub Bot"
+          git config --global user.email "bot@github.com"
+          git add positions.json
+          git commit -m "Updated trade database" || echo "No changes to commit"
+          git push
