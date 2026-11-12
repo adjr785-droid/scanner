@@ -1,7 +1,10 @@
 import requests
+import json
+import os
 
 TOKEN = "9171870506:AAFvZn7HBBtnhIkJ2fFfvr1cB6JRWwPepic"
 CHAT_ID = "8902758637" 
+DB_FILE = "positions.json"
 
 STABLECOINS = ['USDC', 'USDT', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'USDE']
 
@@ -10,21 +13,12 @@ def send_telegram(message):
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     requests.post(url, json=payload)
 
-def get_bybit_coins():
-    bybit_coins = set()
-    try:
-        for page in range(1, 4):
-            url = f"https://api.coingecko.com/api/v3/exchanges/bybit/tickers?page={page}"
-            res = requests.get(url, timeout=10).json()
-            for ticker in res.get("tickers", []):
-                base = ticker.get("base")
-                if base:
-                    bybit_coins.add(base.upper())
-    except Exception as e:
-        print(f"Error fetching Bybit list: {e}")
-    
-    stocks = ['XNVDA', 'XTSLA', 'XAAPL', 'XMSFT', 'XAMZN', 'XGOOG', 'XMETA', 'XBRK', 'XLLY', 'XJPM', 'XSPCX', 'XCOIN']
-    return bybit_coins, stocks
+def load_db():
+    if not os.path.exists(DB_FILE): return {}
+    with open(DB_FILE, "r") as f: return json.load(f)
+
+def save_db(data):
+    with open(DB_FILE, "w") as f: json.dump(data, f, indent=4)
 
 def get_market_data(symbol):
     url = "https://www.okx.com/api/v5/market/candles"
@@ -37,6 +31,7 @@ def get_market_data(symbol):
         current_price = closes[-1]
         prev_close = closes[-2]
         
+        # RSI
         gains = [max(0, closes[i] - closes[i-1]) for i in range(1, len(closes))]
         losses = [max(0, closes[i-1] - closes[i]) for i in range(1, len(closes))]
         avg_gain = sum(gains[-14:])/14
@@ -45,11 +40,9 @@ def get_market_data(symbol):
             
         ma5 = round(sum(closes[-5:]) / 5, 6)
         ma10 = round(sum(closes[-10:]) / 10, 6)
-        recent_low = min(closes[-5:])
-        
-        return current_price, prev_close, rsi, ma5, ma10, recent_low
+        return current_price, prev_close, rsi, ma5, ma10
     except Exception:
-        return None, None, None, None, None, None
+        return None, None, None, None, None
 
 def is_safe_trade(entry, sl, tp):
     risk = entry - sl
@@ -57,107 +50,92 @@ def is_safe_trade(entry, sl, tp):
     if risk <= 0 or reward <= 0: return False
     return (reward / risk) >= 1.8
 
-def run():
-    print("Fetching Bybit listing data...")
-    valid_bybit_coins, fallback_stocks = get_bybit_coins()
+def manage_active_trades():
+    db = load_db()
+    if not db: return
     
-    print("Scanning Market (V5.1)...")
+    for symbol, data in list(db.items()):
+        price, prev, rsi, ma5, ma10 = get_market_data(symbol)
+        if not price: continue
+        
+        entry = data["entry_price"]
+        safe_zone = data["safe_zone"]
+        increase = ((price - entry) / entry) * 100
+        
+        # --- TAKE PROFIT RULES ---
+        # Rule 3: RSI 75+ -> Sell 100%
+        if rsi >= 75:
+            send_telegram(f"🚨 *SELL 100% NOW*\n🪙 *{symbol}* has hit RSI {rsi}!\n💰 Current Price: {price}\n\nRemove this coin from your Bybit account and delete it from `positions.json`.")
+            del db[symbol] # Remove from memory to stop alerting
+            continue
+            
+        # Rule 2: RSI 70 -> Sell 50%
+        elif rsi >= 70 and not data.get("took_profit_50"):
+            send_telegram(f"🎯 *SELL 50% NOW*\n🪙 *{symbol}* has hit RSI {rsi}!\n💰 Current Price: {price}")
+            db[symbol]["took_profit_50"] = True
+            
+        # Rule 1: +10% -> Sell 25%
+        elif increase >= 10.0 and not data.get("took_profit_10"):
+            send_telegram(f"💰 *SELL 25% NOW*\n🪙 *{symbol}* is up +{increase:.1f}%!\n💰 Current Price: {price}")
+            db[symbol]["took_profit_10"] = True
+
+        # --- RE-INVEST RULE ---
+        # If price falls back to the safe zone after taking profit
+        if (db[symbol].get("took_profit_10") or db[symbol].get("took_profit_50")) and price <= safe_zone:
+            send_telegram(f"🔄 *RE-INVEST ALERT*\n🪙 *{symbol}* has dropped back to the Safe Zone ({safe_zone}).\n💰 Current Price: {price}\n\nYou can buy back in here!")
+            # Reset profit flags for the new run
+            db[symbol]["took_profit_10"] = False
+            db[symbol]["took_profit_50"] = False
+            
+    save_db(db)
+
+def scan_for_new_trades():
+    print("Scanning for new setups...")
     url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
     tickers = requests.get(url).json()["data"]
     
+    # (For brevity, this is a simplified version of your V5.1 filter)
     valid = []
     for t in tickers:
         if t['instId'].endswith('-USDT'):
-            base_coin = t['instId'].split('-')[0]
-            
-            if base_coin.startswith('X') and 4 <= len(base_coin) <= 6: continue
-            if base_coin in STABLECOINS: continue
-            if base_coin in fallback_stocks: continue
-            if len(valid_bybit_coins) > 0 and base_coin not in valid_bybit_coins: continue 
-            
+            base = t['instId'].split('-')[0]
+            if base in STABLECOINS or (base.startswith('X') and len(base) <= 6): continue
             vol = float(t['volCcy24h'])
             if vol >= 1000000: 
-                last_price = float(t['last'])
-                open_price = float(t['open24h'])
-                change_24h = ((last_price - open_price) / open_price) * 100
-                valid.append({'symbol': t['instId'], 'vol': vol, 'change': change_24h})
-    
+                change = ((float(t['last']) - float(t['open24h'])) / float(t['open24h'])) * 100
+                valid.append({'symbol': t['instId'], 'vol': vol, 'change': change})
+                
     valid.sort(key=lambda x: x['vol'], reverse=True)
-    to_check = valid[15:50] 
+    to_check = valid[15:50]
     
-    alert_text = ""
-    found = 0
+    db = load_db()
     
     for t in to_check:
-        price, prev_close, rsi, ma5, ma10, recent_low = get_market_data(t['symbol'])
+        if t['symbol'] in db: continue # Don't buy what we already own
+        
+        price, prev, rsi, ma5, ma10 = get_market_data(t['symbol'])
         if not price: continue
         
-        # STATE 1: Bullish Pullback
-        if t['change'] > 1.0 and 42 <= rsi <= 46 and price > ma5 and ma5 > ma10:
-            safe_entry = ma5
-            sl = round(ma10 * 0.99, 6) 
-            tp_final = round(safe_entry * 1.06, 6) 
-            
-            if is_safe_trade(safe_entry, sl, tp_final):
-                found += 1
-                tp_10_percent = round(safe_entry * 1.10, 6)
-                alert_text += f"🟢 *TREND PULLBACK*\n🪙 *{t['symbol']}*\n\n"
-                alert_text += f"🎯 *Buy Zone (Limit):* {safe_entry}\n"
-                alert_text += f"🔄 *Re-invest Zone:* {safe_entry}\n"
-                alert_text += f"🛑 *Stop Loss:* {sl}\n\n"
-                alert_text += f"📉 *PROFIT TAKING PLAN:*\n"
-                alert_text += f"1️⃣ Price hits {tp_10_percent} (+10%): Sell 25%\n"
-                alert_text += f"2️⃣ RSI hits 70: Sell 50%\n"
-                alert_text += f"3️⃣ RSI hits 75-85: Sell 100%\n\n"
-                alert_text += f"📊 *Current Price:* {price}\n"
-                alert_text += f"📊 *RSI:* {rsi} | *MA5:* {ma5} | *MA10:* {ma10}\n\n"
-
-        # STATE 2: Oversold Reversal
-        elif t['change'] < -10.0 and rsi < 28 and price > prev_close:
-            safe_entry = round(recent_low * 1.005, 6)
-            sl = round(recent_low * 0.985, 6) 
-            tp_final = round(safe_entry * 1.06, 6) 
-            
-            if is_safe_trade(safe_entry, sl, tp_final):
-                found += 1
-                tp_10_percent = round(safe_entry * 1.10, 6)
-                alert_text += f"🩸 *OVERSOLD BOUNCE*\n🪙 *{t['symbol']}*\n\n"
-                alert_text += f"🎯 *Buy Zone (Limit):* {safe_entry}\n"
-                alert_text += f"🔄 *Re-invest Zone:* {safe_entry}\n"
-                alert_text += f"🛑 *Stop Loss:* {sl}\n\n"
-                alert_text += f"📉 *PROFIT TAKING PLAN:*\n"
-                alert_text += f"1️⃣ Price hits {tp_10_percent} (+10%): Sell 25%\n"
-                alert_text += f"2️⃣ RSI hits 70: Sell 50%\n"
-                alert_text += f"3️⃣ RSI hits 75-85: Sell 100%\n\n"
-                alert_text += f"📊 *Current Price:* {price}\n"
-                alert_text += f"📊 *RSI:* {rsi} | *MA5:* {ma5} | *MA10:* {ma10}\n\n"
-
         # STATE 3: Early Breakout
-        elif t['change'] > 3.0 and 50 <= rsi <= 58 and price > ma5 and ma5 > ma10:
+        if t['change'] > 3.0 and 50 <= rsi <= 58 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
             sl = round(ma5 * 0.98, 6) 
-            tp_final = round(safe_entry * 1.06, 6) 
+            tp = round(safe_entry * 1.10, 6) 
             
-            if is_safe_trade(safe_entry, sl, tp_final):
-                found += 1
-                tp_10_percent = round(safe_entry * 1.10, 6)
-                alert_text += f"🚀 *EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n\n"
-                alert_text += f"🎯 *Buy Zone (Limit):* {safe_entry}\n"
-                alert_text += f"🔄 *Re-invest Zone:* {safe_entry}\n"
-                alert_text += f"🛑 *Stop Loss:* {sl}\n\n"
-                alert_text += f"📉 *PROFIT TAKING PLAN:*\n"
-                alert_text += f"1️⃣ Price hits {tp_10_percent} (+10%): Sell 25%\n"
-                alert_text += f"2️⃣ RSI hits 70: Sell 50%\n"
-                alert_text += f"3️⃣ RSI hits 75-85: Sell 100%\n\n"
-                alert_text += f"📊 *Current Price:* {price}\n"
-                alert_text += f"📊 *RSI:* {rsi} | *MA5:* {ma5} | *MA10:* {ma10}\n\n"
+            if is_safe_trade(safe_entry, sl, tp):
+                # Send alert
+                msg = f"🚀 *NEW EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi}"
+                send_telegram(msg)
+                
+                # SAVE TO MEMORY
+                db[t['symbol']] = {
+                    "entry_price": safe_entry,
+                    "safe_zone": safe_entry,
+                    "took_profit_10": False,
+                    "took_profit_50": False
+                }
+                save_db(db)
 
-    if found == 0:
-        alert_text = "🛑 No safe Bybit setups found (R:R > 1:1.8)."
-    else:
-        alert_text = "🛡️ *V5.1 TRADE MANAGER ALERTS*\n\n" + alert_text
-            
-    print(alert_text)
-    send_telegram(alert_text)
-
-run()
+if __name__ == "__main__":
+    manage_active_trades()
+    scan_for_new_trades()
