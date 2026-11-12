@@ -6,7 +6,7 @@ TOKEN = "9171870506:AAFvZn7HBBtnhIkJ2fFfvr1cB6JRWwPepic"
 CHAT_ID = "8902758637" 
 DB_FILE = "positions.json"
 
-STABLECOINS = ['USDC', 'USDT', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'USDE']
+STABLECOINS = ['USDC', 'USDT', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'USDE', 'ONE'] # ONE added to blacklist!
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -43,12 +43,6 @@ def get_market_data(symbol):
     except Exception:
         return None, None, None, None, None
 
-def is_safe_trade(entry, sl, tp):
-    risk = entry - sl
-    reward = tp - entry
-    if risk <= 0 or reward <= 0: return False
-    return (reward / risk) >= 1.8
-
 def manage_active_trades():
     db = load_db()
     if not db: return
@@ -59,30 +53,25 @@ def manage_active_trades():
         
         entry = data["entry_price"]
         safe_zone = data["safe_zone"]
-        sl = data["stop_loss"] # NEW: Track the stop loss
+        sl = data["stop_loss"]
         increase = ((price - entry) / entry) * 100
         
-        # --- STOP LOSS RULE (The "Alternative") ---
         if price <= sl:
             send_telegram(f"🩸 *STOP LOSS HIT*\n🪙 *{symbol}* has dropped to {price}.\n\nExit the trade on Bybit. Removing from memory to search for new alternatives.")
-            del db[symbol] # Remove from memory so the bot can find a better alternative
+            del db[symbol] 
             continue
 
-        # --- TAKE PROFIT RULES ---
         if rsi >= 75:
             send_telegram(f"🚨 *SELL 100% NOW*\n🪙 *{symbol}* has hit RSI {rsi}!\n💰 Current Price: {price}")
             del db[symbol] 
             continue
-            
         elif rsi >= 70 and not data.get("took_profit_50"):
             send_telegram(f"🎯 *SELL 50% NOW*\n🪙 *{symbol}* has hit RSI {rsi}!\n💰 Current Price: {price}")
             db[symbol]["took_profit_50"] = True
-            
         elif increase >= 10.0 and not data.get("took_profit_10"):
-            send_telegram(f"💰 *SELL 25% NOW*\n🪙 *{symbol}* is up +{increase:.1f}%!\n💰 Current Price: {price}")
+            send_telegram(f"💰 *SELL 25% NOW*\n🪙 *{symbol}* has gained +{increase:.1f}%!\n💰 Current Price: {price}")
             db[symbol]["took_profit_10"] = True
 
-        # --- RE-INVEST RULE ---
         if (db[symbol].get("took_profit_10") or db[symbol].get("took_profit_50")) and price <= safe_zone:
             send_telegram(f"🔄 *RE-INVEST ALERT*\n🪙 *{symbol}* has dropped back to the Safe Zone ({safe_zone}).\n💰 Current Price: {price}")
             db[symbol]["took_profit_10"] = False
@@ -92,11 +81,7 @@ def manage_active_trades():
 
 def scan_for_new_trades():
     db = load_db()
-    
-    # If we already have 3 active trades, don't take more risk
-    if len(db) >= 3:
-        print("Max active trades reached. Managing existing positions only.")
-        return
+    if len(db) >= 3: return # Max 3 active trades
 
     url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
     tickers = requests.get(url).json()["data"]
@@ -112,7 +97,9 @@ def scan_for_new_trades():
                 valid.append({'symbol': t['instId'], 'vol': vol, 'change': change})
                 
     valid.sort(key=lambda x: x['vol'], reverse=True)
-    to_check = valid[15:50] # SKIP TOP 15 MEGA-CAPS
+    to_check = valid[15:50]
+    
+    candidates = [] # Temporary list to hold all valid setups
     
     for t in to_check:
         if t['symbol'] in db: continue 
@@ -120,24 +107,49 @@ def scan_for_new_trades():
         price, prev, rsi, ma5, ma10 = get_market_data(t['symbol'])
         if not price: continue
         
-        # STATE 3: Early Breakout
+        # Check State 3: Early Breakout
         if t['change'] > 3.0 and 50 <= rsi <= 58 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
             sl = round(ma5 * 0.98, 6) 
             tp = round(safe_entry * 1.10, 6) 
             
-            if is_safe_trade(safe_entry, sl, tp):
-                msg = f"🚀 *NEW EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi}"
-                send_telegram(msg)
+            risk = safe_entry - sl
+            reward = tp - safe_entry
+            rr_ratio = reward / risk if risk > 0 else 0
+            
+            if rr_ratio >= 1.8:
+                candidates.append({
+                    "symbol": t['symbol'],
+                    "entry": safe_entry,
+                    "sl": sl,
+                    "tp": tp,
+                    "rsi": rsi,
+                    "vol": t['vol'],
+                    "rr": rr_ratio
+                })
                 
-                db[t['symbol']] = {
-                    "entry_price": safe_entry,
-                    "safe_zone": safe_entry,
-                    "stop_loss": sl, # Saving the SL to memory
-                    "took_profit_10": False,
-                    "took_profit_50": False
-                }
-                save_db(db)
+    # --- THE RANKING LOGIC ---
+    # 1st Priority: Volume (Liquidity). 2nd Priority: Risk/Reward Ratio.
+    candidates.sort(key=lambda x: (x['vol'], x['rr']), reverse=True)
+    
+    # Send only the TOP 2 best tokens
+    top_candidates = candidates[:2]
+    
+    for c in top_candidates:
+        msg = f"🚀 *BEST EARLY BREAKOUT*\n🪙 *{c['symbol']}*\n🎯 Entry: {c['entry']}\n🛑 SL: {c['sl']}\n💰 TP: {c['tp']}\n📊 RSI: {c['rsi']} | R:R: 1:{c['rr']:.1f}"
+        send_telegram(msg)
+        
+        db[c['symbol']] = {
+            "entry_price": c['entry'],
+            "safe_zone": c['entry'],
+            "stop_loss": c['sl'],
+            "took_profit_10": False,
+            "took_profit_50": False
+        }
+        save_db(db)
+        
+    if not top_candidates:
+        print("No candidates met the criteria.")
 
 if __name__ == "__main__":
     manage_active_trades()
