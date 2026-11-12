@@ -43,16 +43,20 @@ def get_market_data(symbol):
         # Calculate MAs
         ma5 = round(sum(closes[-5:]) / 5, 6)
         ma10 = round(sum(closes[-10:]) / 10, 6)
-        return current_price, prev_close, rsi, ma5, ma10
+        
+        # Calculate Recent Low (for oversold stop loss)
+        recent_low = min(closes[-5:])
+        
+        return current_price, prev_close, rsi, ma5, ma10, recent_low
     except Exception:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
 def manage_active_trades():
     db = load_db()
     if not db: return
     
     for symbol, data in list(db.items()):
-        price, prev, rsi, ma5, ma10 = get_market_data(symbol)
+        price, prev, rsi, ma5, ma10, recent_low = get_market_data(symbol)
         if not price: continue
         
         entry = data["entry_price"]
@@ -125,17 +129,13 @@ def scan_for_new_trades():
     candidates = []
     
     for t in to_check:
-        price, prev, rsi, ma5, ma10 = get_market_data(t['symbol'])
+        price, prev, rsi, ma5, ma10, recent_low = get_market_data(t['symbol'])
         if not price: continue
         
-        # --- NEW RULE: RSI 42-48 BULLISH PULLBACK ---
+        # --- STRATEGY 1: BULLISH PULLBACK (RSI 42-48) ---
         if t['change'] > 1.0 and 42 <= rsi <= 48 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
-            
-            # --- 4% STOP LOSS ---
             sl = round(ma5 * 0.96, 6) 
-            
-            # 10% Take Profit
             tp = round(safe_entry * 1.10, 6) 
             
             risk = safe_entry - sl
@@ -144,13 +144,26 @@ def scan_for_new_trades():
             
             if rr_ratio >= 1.8:
                 candidates.append({
-                    "symbol": t['symbol'],
-                    "entry": safe_entry,
-                    "sl": sl,
-                    "tp": tp,
-                    "rsi": rsi,
-                    "vol": t['vol'],
-                    "rr": rr_ratio
+                    "symbol": t['symbol'], "type": "TREND PULLBACK",
+                    "entry": safe_entry, "sl": sl, "tp": tp,
+                    "rsi": rsi, "vol": t['vol'], "rr": rr_ratio
+                })
+
+        # --- STRATEGY 2: OVERSOLD BOUNCE (RSI < 30 + Green Candle) ---
+        elif t['change'] < -8.0 and rsi < 30 and price > prev:
+            safe_entry = round(recent_low * 1.005, 6) # Buy slightly above the low
+            sl = round(recent_low * 0.98, 6)          # Stop loss 2% below the low
+            tp = round(safe_entry * 1.10, 6)          # 10% Target
+            
+            risk = safe_entry - sl
+            reward = tp - safe_entry
+            rr_ratio = reward / risk if risk > 0 else 0
+            
+            if rr_ratio >= 1.8:
+                candidates.append({
+                    "symbol": t['symbol'], "type": "OVERSOLD BOUNCE",
+                    "entry": safe_entry, "sl": sl, "tp": tp,
+                    "rsi": rsi, "vol": t['vol'], "rr": rr_ratio
                 })
                 
     # Rank by Volume (safest) and R:R (most profitable)
@@ -160,7 +173,9 @@ def scan_for_new_trades():
     if candidates:
         best = candidates[0] 
         
-        msg = f"🏆 *THE BEST SETUP RIGHT NOW*\n🪙 *{best['symbol']}*\n🎯 Entry: {best['entry']}\n🛑 SL: {best['sl']} (4%)\n💰 TP: {best['tp']} (10%)\n📊 RSI: {best['rsi']} | R:R: 1:{best['rr']:.1f}"
+        icon = "🏆" if best['type'] == "TREND PULLBACK" else "🩸"
+        
+        msg = f"{icon} *{best['type']}*\n🪙 *{best['symbol']}*\n🎯 Entry: {best['entry']}\n🛑 SL: {best['sl']}\n💰 TP: {best['tp']}\n📊 RSI: {best['rsi']} | R:R: 1:{best['rr']:.1f}"
         send_telegram(msg)
         
         db[best['symbol']] = {
