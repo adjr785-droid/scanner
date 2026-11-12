@@ -5,12 +5,5 @@
         "stop_loss": 0.046316,
         "took_profit_10": false,
         "took_profit_50": false
-    },
-    "ONE-USDT": {
-        "entry_price": 0.001682,
-        "safe_zone": 0.001682,
-        "stop_loss": 0.001648,
-        "took_profit_10": false,
-        "took_profit_50": false
     }
 }
