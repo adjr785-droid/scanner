@@ -23,7 +23,6 @@ def get_bybit_coins():
     except Exception as e:
         print(f"Error fetching Bybit list: {e}")
     
-    # Hardcoded blacklist of X-Stocks on OKX
     stocks = ['XNVDA', 'XTSLA', 'XAAPL', 'XMSFT', 'XAMZN', 'XGOOG', 'XMETA', 'XBRK', 'XLLY', 'XJPM', 'XSPCX', 'XCOIN']
     return bybit_coins, stocks
 
@@ -62,7 +61,7 @@ def run():
     print("Fetching Bybit listing data...")
     valid_bybit_coins, fallback_stocks = get_bybit_coins()
     
-    print("Scanning Market (V4.9)...")
+    print("Scanning Market (V5.1)...")
     url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
     tickers = requests.get(url).json()["data"]
     
@@ -71,16 +70,12 @@ def run():
         if t['instId'].endswith('-USDT'):
             base_coin = t['instId'].split('-')[0]
             
-            # Filter out OKX X-Stocks
-            if base_coin.startswith('X') and 4 <= len(base_coin) <= 6:
-                continue
-            
+            if base_coin.startswith('X') and 4 <= len(base_coin) <= 6: continue
             if base_coin in STABLECOINS: continue
             if base_coin in fallback_stocks: continue
             if len(valid_bybit_coins) > 0 and base_coin not in valid_bybit_coins: continue 
             
             vol = float(t['volCcy24h'])
-            # CHANGED TO $1 MILLION VOLUME
             if vol >= 1000000: 
                 last_price = float(t['last'])
                 open_price = float(t['open24h'])
@@ -88,8 +83,6 @@ def run():
                 valid.append({'symbol': t['instId'], 'vol': vol, 'change': change_24h})
     
     valid.sort(key=lambda x: x['vol'], reverse=True)
-    
-    # Skip Top 15 Mega-Caps
     to_check = valid[15:50] 
     
     alert_text = ""
@@ -103,33 +96,66 @@ def run():
         if t['change'] > 1.0 and 42 <= rsi <= 46 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
             sl = round(ma10 * 0.99, 6) 
-            tp = round(safe_entry * 1.05, 6) 
-            if is_safe_trade(safe_entry, sl, tp):
+            tp_final = round(safe_entry * 1.06, 6) 
+            
+            if is_safe_trade(safe_entry, sl, tp_final):
                 found += 1
-                alert_text += f"🟢 *TREND PULLBACK*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi}\n\n"
+                tp_10_percent = round(safe_entry * 1.10, 6)
+                alert_text += f"🟢 *TREND PULLBACK*\n🪙 *{t['symbol']}*\n\n"
+                alert_text += f"🎯 *Buy Zone (Limit):* {safe_entry}\n"
+                alert_text += f"🔄 *Re-invest Zone:* {safe_entry}\n"
+                alert_text += f"🛑 *Stop Loss:* {sl}\n\n"
+                alert_text += f"📉 *PROFIT TAKING PLAN:*\n"
+                alert_text += f"1️⃣ Price hits {tp_10_percent} (+10%): Sell 25%\n"
+                alert_text += f"2️⃣ RSI hits 70: Sell 50%\n"
+                alert_text += f"3️⃣ RSI hits 75-85: Sell 100%\n\n"
+                alert_text += f"📊 *Current Price:* {price}\n"
+                alert_text += f"📊 *RSI:* {rsi} | *MA5:* {ma5} | *MA10:* {ma10}\n\n"
 
         # STATE 2: Oversold Reversal
         elif t['change'] < -10.0 and rsi < 28 and price > prev_close:
             safe_entry = round(recent_low * 1.005, 6)
             sl = round(recent_low * 0.985, 6) 
-            tp = round(safe_entry * 1.06, 6) 
-            if is_safe_trade(safe_entry, sl, tp):
+            tp_final = round(safe_entry * 1.06, 6) 
+            
+            if is_safe_trade(safe_entry, sl, tp_final):
                 found += 1
-                alert_text += f"🩸 *OVERSOLD BOUNCE*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi} | 24H: {t['change']:.1f}%\n\n"
+                tp_10_percent = round(safe_entry * 1.10, 6)
+                alert_text += f"🩸 *OVERSOLD BOUNCE*\n🪙 *{t['symbol']}*\n\n"
+                alert_text += f"🎯 *Buy Zone (Limit):* {safe_entry}\n"
+                alert_text += f"🔄 *Re-invest Zone:* {safe_entry}\n"
+                alert_text += f"🛑 *Stop Loss:* {sl}\n\n"
+                alert_text += f"📉 *PROFIT TAKING PLAN:*\n"
+                alert_text += f"1️⃣ Price hits {tp_10_percent} (+10%): Sell 25%\n"
+                alert_text += f"2️⃣ RSI hits 70: Sell 50%\n"
+                alert_text += f"3️⃣ RSI hits 75-85: Sell 100%\n\n"
+                alert_text += f"📊 *Current Price:* {price}\n"
+                alert_text += f"📊 *RSI:* {rsi} | *MA5:* {ma5} | *MA10:* {ma10}\n\n"
 
         # STATE 3: Early Breakout
         elif t['change'] > 3.0 and 50 <= rsi <= 58 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
             sl = round(ma5 * 0.98, 6) 
-            tp = round(safe_entry * 1.06, 6) 
-            if is_safe_trade(safe_entry, sl, tp):
+            tp_final = round(safe_entry * 1.06, 6) 
+            
+            if is_safe_trade(safe_entry, sl, tp_final):
                 found += 1
-                alert_text += f"🚀 *EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n🎯 Entry: {safe_entry}\n🛑 SL: {sl}\n💰 TP: {tp}\n📊 RSI: {rsi} | 24H: +{t['change']:.1f}%\n\n"
+                tp_10_percent = round(safe_entry * 1.10, 6)
+                alert_text += f"🚀 *EARLY BREAKOUT*\n🪙 *{t['symbol']}*\n\n"
+                alert_text += f"🎯 *Buy Zone (Limit):* {safe_entry}\n"
+                alert_text += f"🔄 *Re-invest Zone:* {safe_entry}\n"
+                alert_text += f"🛑 *Stop Loss:* {sl}\n\n"
+                alert_text += f"📉 *PROFIT TAKING PLAN:*\n"
+                alert_text += f"1️⃣ Price hits {tp_10_percent} (+10%): Sell 25%\n"
+                alert_text += f"2️⃣ RSI hits 70: Sell 50%\n"
+                alert_text += f"3️⃣ RSI hits 75-85: Sell 100%\n\n"
+                alert_text += f"📊 *Current Price:* {price}\n"
+                alert_text += f"📊 *RSI:* {rsi} | *MA5:* {ma5} | *MA10:* {ma10}\n\n"
 
     if found == 0:
         alert_text = "🛑 No safe Bybit setups found (R:R > 1:1.8)."
     else:
-        alert_text = "🛡️ *V4.9 $1M VOLUME ALERTS*\n\n" + alert_text
+        alert_text = "🛡️ *V5.1 TRADE MANAGER ALERTS*\n\n" + alert_text
             
     print(alert_text)
     send_telegram(alert_text)
