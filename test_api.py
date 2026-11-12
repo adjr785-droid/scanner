@@ -26,4 +26,4 @@ try:
     else:
         print(f"❌ FAILED: {response['retMsg']}")
 except Exception as e:
-    print(f"❌ ERROR: {e}")
+    print(f"❌ ERROR: {e}"
