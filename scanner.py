@@ -8,7 +8,8 @@ CHAT_ID = "8902758637"
 DB_FILE = "positions.json"
 STATE_FILE = "tg_state.json"
 
-STABLECOINS = ['USDC', 'USDT', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'USDE', 'ONE']
+# ADDED 'CT' TO THE BLACKLIST
+STABLECOINS = ['USDC', 'USDT', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'USDE', 'ONE', 'CT']
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -61,7 +62,6 @@ def check_telegram_commands():
                 if "message" in update and "text" in update["message"]:
                     text = update["message"]["text"].lower()
                     
-                    # 1. RSI LOOKUP FOR A SPECIFIC COIN
                     if text.startswith("/rsi"):
                         parts = text.split()
                         if len(parts) > 1:
@@ -77,7 +77,6 @@ def check_telegram_commands():
                         else:
                             send_telegram("❌ Please specify a coin. Example: `/rsi BTC`")
 
-                    # 2. SCAN FOR COINS WITHIN AN RSI RANGE
                     elif text.startswith("/scan"):
                         parts = text.split()
                         if len(parts) == 3:
@@ -115,7 +114,6 @@ def check_telegram_commands():
                         else:
                             send_telegram("❌ Use format: `/scan [min] [max]`. Example: `/scan 30 40`")
 
-                    # 3. STATUS
                     elif "/status" in text:
                         db = load_json(DB_FILE)
                         if not db:
@@ -127,12 +125,10 @@ def check_telegram_commands():
                                     increase = ((price - data['entry_price']) / data['entry_price']) * 100
                                     send_telegram(f"🟢 *ACTIVE TRADE:* {sym}\n💰 Entry: {data['entry_price']}\n📊 Current Price: {price} ({increase:+.1f}%)\n🎯 RSI: {rsi}")
                                     
-                    # 4. CLEAR MEMORY
                     elif "/clear" in text:
                         save_json(DB_FILE, {})
                         send_telegram("🧹 *MEMORY CLEARED!* The bot has forgotten all active trades and will start scanning for a new setup.")
                         
-                    # 5. HELP
                     elif "/help" in text:
                         send_telegram("🤖 *BOT COMMANDS:*\n/status - Check active trades\n/rsi BTC - Get live RSI for a coin\n/scan 30 40 - Find coins in an RSI range\n/clear - Wipe memory\n/help - Show menu")
             
@@ -140,7 +136,7 @@ def check_telegram_commands():
             save_json(STATE_FILE, state)
             
     except Exception as e:
-        print(f"⚠️ TELEGRAM ERROR: {e}") # This prints to GitHub logs if something fails
+        print(f"⚠️ TELEGRAM ERROR: {e}") 
 
 # --- TRADE MANAGEMENT ---
 def manage_active_trades():
