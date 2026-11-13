@@ -1,11 +1,30 @@
-- name: Run Tracker and Scanner
-  run: python scanner.py
+name: Crypto Automation
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
 
-- name: Save Database and State
-  run: |
-    git config --global user.name "GitHub Bot"
-    git config --global user.email "bot@github.com"
-    git add positions.json || echo "No positions file"
-    git add tg_state.json || echo "No state file"
-    git commit -m "Updated trade database and telegram state" || echo "No changes to commit"
-    git push
+jobs:
+  run-bots:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run Tracker and Scanner
+        run: python scanner.py
+      - name: Save Database and State
+        run: |
+          git config --global user.name "GitHub Bot"
+          git config --global user.email "bot@github.com"
+          git add positions.json || echo "No positions file"
+          git add tg_state.json || echo "No state file"
+          git commit -m "Updated trade database and telegram state" || echo "No changes to commit"
+          git push
