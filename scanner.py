@@ -8,7 +8,7 @@ CHAT_ID = "8902758637"
 DB_FILE = "positions.json"
 STATE_FILE = "tg_state.json"
 
-# ADDED 'CT' TO THE BLACKLIST
+# Added 'CT' to the blacklist
 STABLECOINS = ['USDC', 'USDT', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'USDE', 'ONE', 'CT']
 
 def send_telegram(message):
@@ -62,6 +62,7 @@ def check_telegram_commands():
                 if "message" in update and "text" in update["message"]:
                     text = update["message"]["text"].lower()
                     
+                    # 1. RSI LOOKUP
                     if text.startswith("/rsi"):
                         parts = text.split()
                         if len(parts) > 1:
@@ -77,6 +78,7 @@ def check_telegram_commands():
                         else:
                             send_telegram("❌ Please specify a coin. Example: `/rsi BTC`")
 
+                    # 2. SCAN RSI RANGE
                     elif text.startswith("/scan"):
                         parts = text.split()
                         if len(parts) == 3:
@@ -90,7 +92,7 @@ def check_telegram_commands():
                                 
                                 valid = [t for t in tickers if t['instId'].endswith('-USDT') and float(t['volCcy24h']) >= 5000000]
                                 valid.sort(key=lambda x: float(x['volCcy24h']), reverse=True)
-                                to_check = valid[:30]
+                                to_check = valid[:30] # Checks top 30 including mega-caps for manual scans
                                 
                                 results = []
                                 for t in to_check:
@@ -114,6 +116,7 @@ def check_telegram_commands():
                         else:
                             send_telegram("❌ Use format: `/scan [min] [max]`. Example: `/scan 30 40`")
 
+                    # 3. STATUS
                     elif "/status" in text:
                         db = load_json(DB_FILE)
                         if not db:
@@ -125,10 +128,12 @@ def check_telegram_commands():
                                     increase = ((price - data['entry_price']) / data['entry_price']) * 100
                                     send_telegram(f"🟢 *ACTIVE TRADE:* {sym}\n💰 Entry: {data['entry_price']}\n📊 Current Price: {price} ({increase:+.1f}%)\n🎯 RSI: {rsi}")
                                     
+                    # 4. CLEAR MEMORY
                     elif "/clear" in text:
                         save_json(DB_FILE, {})
                         send_telegram("🧹 *MEMORY CLEARED!* The bot has forgotten all active trades and will start scanning for a new setup.")
                         
+                    # 5. HELP
                     elif "/help" in text:
                         send_telegram("🤖 *BOT COMMANDS:*\n/status - Check active trades\n/rsi BTC - Get live RSI for a coin\n/scan 30 40 - Find coins in an RSI range\n/clear - Wipe memory\n/help - Show menu")
             
@@ -180,7 +185,7 @@ def manage_active_trades():
             
     save_json(DB_FILE, db)
 
-# --- SCANNER ---
+# --- AUTO SCANNER ---
 def scan_for_new_trades():
     db = load_json(DB_FILE)
     if len(db) >= 1: return 
@@ -199,7 +204,7 @@ def scan_for_new_trades():
                 valid.append({'symbol': t['instId'], 'vol': vol, 'change': change})
                 
     valid.sort(key=lambda x: x['vol'], reverse=True)
-    to_check = valid[15:50]
+    to_check = valid[15:50] # SKIP TOP 15 MEGA-CAPS
     
     candidates = []
     
@@ -207,6 +212,7 @@ def scan_for_new_trades():
         price, prev, rsi, ma5, ma10, recent_low = get_market_data(t['symbol'])
         if not price: continue
         
+        # STRATEGY 1: BULLISH PULLBACK (RSI 42-48)
         if t['change'] > 1.0 and 42 <= rsi <= 48 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
             sl = round(ma5 * 0.95, 6) 
@@ -215,6 +221,7 @@ def scan_for_new_trades():
             if rr >= 1.8:
                 candidates.append({"symbol": t['symbol'], "type": "TREND PULLBACK", "entry": safe_entry, "sl": sl, "tp": tp, "rsi": rsi, "vol": t['vol'], "rr": rr})
 
+        # STRATEGY 2: OVERSOLD BOUNCE (RSI < 30)
         elif t['change'] < -8.0 and rsi < 30 and price > prev:
             safe_entry = round(recent_low * 1.005, 6)
             sl = round(recent_low * 0.98, 6)          
