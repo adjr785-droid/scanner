@@ -52,11 +52,13 @@ def check_telegram_commands():
     
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_id + 1}"
     try:
-        res = requests.get(url).json()
-        if "result" in res and len(res["result"]) > 0:
+        res = requests.get(url, timeout=10).json()
+        
+        if res.get("ok") and len(res.get("result", [])) > 0:
             for update in res["result"]:
                 last_id = update["update_id"]
-                if "message" in update and "text" in update["text"]:
+                
+                if "message" in update and "text" in update["message"]:
                     text = update["message"]["text"].lower()
                     
                     # 1. RSI LOOKUP FOR A SPECIFIC COIN
@@ -82,15 +84,14 @@ def check_telegram_commands():
                             try:
                                 min_rsi = float(parts[1])
                                 max_rsi = float(parts[2])
-                                send_telegram(f"🔍 Scanning Top 30 coins for RSI between {min_rsi} and {max_rsi}... (This may take 15 seconds)")
+                                send_telegram(f"🔍 Scanning Top 30 coins for RSI between {min_rsi} and {max_rsi}... (Wait 15s)")
                                 
                                 url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
                                 tickers = requests.get(url).json()["data"]
                                 
-                                # Filter for USDT and volume > $5M to keep it clean
                                 valid = [t for t in tickers if t['instId'].endswith('-USDT') and float(t['volCcy24h']) >= 5000000]
                                 valid.sort(key=lambda x: float(x['volCcy24h']), reverse=True)
-                                to_check = valid[:30] # Check top 30 to avoid GitHub timeout
+                                to_check = valid[:30]
                                 
                                 results = []
                                 for t in to_check:
@@ -102,7 +103,7 @@ def check_telegram_commands():
                                         results.append(f"🪙 *{coin_name}*: RSI {rsi} (Price: {price})")
                                 
                                 if results:
-                                    response = f"📊 *RSI RESULTS ({min_rsi} - {max_rsi})*\n\n" + "\n".join(results[:10]) # Limit to top 10 results
+                                    response = f"📊 *RSI RESULTS ({min_rsi} - {max_rsi})*\n\n" + "\n".join(results[:10])
                                     if len(results) > 10:
                                         response += f"\n\n*...and {len(results) - 10} more.*"
                                     send_telegram(response)
@@ -133,11 +134,13 @@ def check_telegram_commands():
                         
                     # 5. HELP
                     elif "/help" in text:
-                        send_telegram("🤖 *BOT COMMANDS:*\n/status - Check active trades\n/rsi BTC - Get live RSI & MAs for a coin\n/scan 30 40 - Find coins in an RSI range\n/clear - Wipe memory\n/help - Show menu")
+                        send_telegram("🤖 *BOT COMMANDS:*\n/status - Check active trades\n/rsi BTC - Get live RSI for a coin\n/scan 30 40 - Find coins in an RSI range\n/clear - Wipe memory\n/help - Show menu")
+            
             state["last_update_id"] = last_id
             save_json(STATE_FILE, state)
+            
     except Exception as e:
-        pass
+        print(f"⚠️ TELEGRAM ERROR: {e}") # This prints to GitHub logs if something fails
 
 # --- TRADE MANAGEMENT ---
 def manage_active_trades():
