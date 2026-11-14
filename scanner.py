@@ -10,21 +10,15 @@ STATE_FILE = "tg_state.json"
 
 STABLECOINS = ['USDC', 'USDT', 'DAI', 'FDUSD', 'TUSD', 'USDD', 'USDE', 'ONE', 'CT']
 
-# --- COINGECKO ATH / ATL HELPER ---
 def get_ath_atl(coin_symbol):
     try:
         search_url = f"https://api.coingecko.com/api/v3/search?query={coin_symbol}"
         search_res = requests.get(search_url, timeout=10).json()
-        
-        if not search_res.get('coins'):
-            return None, None
-        
+        if not search_res.get('coins'): return None, None
         coin_id = search_res['coins'][0]['id']
         market_url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={coin_id}"
         market_res = requests.get(market_url, timeout=10).json()
-        
-        if market_res:
-            return market_res[0].get('ath'), market_res[0].get('atl')
+        if market_res: return market_res[0].get('ath'), market_res[0].get('atl')
         return None, None
     except Exception:
         return None, None
@@ -64,7 +58,6 @@ def get_market_data(symbol):
     except Exception:
         return None, None, None, None, None, None
 
-# --- TELEGRAM COMMAND CENTER ---
 def check_telegram_commands():
     state = load_json(STATE_FILE)
     last_id = state.get("last_update_id", 0)
@@ -72,15 +65,12 @@ def check_telegram_commands():
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_id + 1}"
     try:
         res = requests.get(url, timeout=10).json()
-        
         if res.get("ok") and len(res.get("result", [])) > 0:
             for update in res["result"]:
                 last_id = update["update_id"]
-                
                 if "message" in update and "text" in update["message"]:
                     text = update["message"]["text"].lower()
                     
-                    # 1. RSI LOOKUP
                     if text.startswith("/rsi"):
                         parts = text.split()
                         if len(parts) > 1:
@@ -96,7 +86,6 @@ def check_telegram_commands():
                         else:
                             send_telegram("❌ Please specify a coin. Example: `/rsi BTC`")
 
-                    # 2. SCAN RSI RANGE
                     elif text.startswith("/scan"):
                         parts = text.split()
                         if len(parts) == 3:
@@ -134,7 +123,6 @@ def check_telegram_commands():
                         else:
                             send_telegram("❌ Use format: `/scan [min] [max]`.")
 
-                    # 3. STATUS
                     elif "/status" in text:
                         db = load_json(DB_FILE)
                         if not db:
@@ -146,12 +134,10 @@ def check_telegram_commands():
                                     inc = ((price - data['entry_price']) / data['entry_price']) * 100
                                     send_telegram(f"🟢 *ACTIVE:* {sym}\n💰 Entry: {data['entry_price']}\n📊 Current: {price} ({inc:+.1f}%)\n🎯 RSI: {rsi}")
                                     
-                    # 4. CLEAR MEMORY
                     elif "/clear" in text:
                         save_json(DB_FILE, {})
                         send_telegram("🧹 *MEMORY CLEARED!* The bot will start scanning for a new setup.")
                         
-                    # 5. HELP
                     elif "/help" in text:
                         send_telegram("🤖 *COMMANDS:*\n/status - Check trades\n/rsi BTC - Get live RSI\n/scan 30 40 - Find coins in an RSI range\n/clear - Wipe memory\n/help - Menu")
             
@@ -161,7 +147,6 @@ def check_telegram_commands():
     except Exception as e:
         print(f"⚠️ TELEGRAM ERROR: {e}") 
 
-# --- TRADE MANAGEMENT ---
 def manage_active_trades():
     db = load_json(DB_FILE)
     if not db: return
@@ -173,8 +158,9 @@ def manage_active_trades():
         entry = data["entry_price"]
         increase = ((price - entry) / entry) * 100
         
+        # CATASTROPHE STOP LOSS (20% drop)
         if price <= data["stop_loss"]:
-            send_telegram(f"🩸 *STOP LOSS HIT*\n🪙 *{symbol}* dropped to {price}.\n\nExit the trade. Removing from memory.")
+            send_telegram(f"🩸 *CATASTROPHE STOP LOSS HIT*\n🪙 *{symbol}* dropped 20% to {price}.\n\nExit the trade. Removing from memory.")
             del db[symbol] 
             continue
 
@@ -196,7 +182,6 @@ def manage_active_trades():
             
     save_json(DB_FILE, db)
 
-# --- SCANNER ---
 def scan_for_new_trades():
     db = load_json(DB_FILE)
     if len(db) >= 1: return 
@@ -226,7 +211,8 @@ def scan_for_new_trades():
         # STATE 1: TREND PULLBACK
         if t['change'] > 1.0 and 42 <= rsi <= 48 and price > ma5 and ma5 > ma10:
             safe_entry = ma5
-            sl = round(ma5 * 0.95, 6) 
+            # WIDER 20% STOP LOSS
+            sl = round(ma5 * 0.80, 6) 
             tp1 = round(safe_entry * 1.10, 6)
             tp2 = round(safe_entry * 1.20, 6) 
             rr = (tp1 - safe_entry) / (safe_entry - sl) if (safe_entry - sl) > 0 else 0
@@ -236,7 +222,8 @@ def scan_for_new_trades():
         # STATE 2: OVERSOLD BOUNCE
         elif t['change'] < -8.0 and rsi < 30 and price > prev:
             safe_entry = round(recent_low * 1.005, 6)
-            sl = round(recent_low * 0.98, 6)          
+            # WIDER 20% STOP LOSS
+            sl = round(recent_low * 0.80, 6)          
             tp1 = round(safe_entry * 1.10, 6)          
             tp2 = round(safe_entry * 1.20, 6)
             rr = (tp1 - safe_entry) / (safe_entry - sl) if (safe_entry - sl) > 0 else 0
@@ -249,7 +236,6 @@ def scan_for_new_trades():
         best = candidates[0] 
         coin_symbol = best['symbol'].split('-')[0] 
         
-        # Fetch ATH/ATL
         ath, atl = get_ath_atl(coin_symbol)
         ath_str = f"${ath:.4f}" if ath else "N/A"
         atl_str = f"${atl:.4f}" if atl else "N/A"
@@ -260,7 +246,7 @@ def scan_for_new_trades():
             f"{icon} *{best['type']}*\n"
             f"🪙 *{best['symbol']}*\n\n"
             f"🎯 *Entry:* {best['entry']}\n"
-            f"🛑 *Stop Loss:* {best['sl']} (5%)\n"
+            f"🛑 *Catastrophe SL:* {best['sl']} (20%)\n"
             f"💰 *TP1:* {best['tp1']} (10%)\n"
             f"💰 *TP2:* {best['tp2']} (20%)\n\n"
             f"📊 *RSI:* {best['rsi']} | *R:R:* 1:{best['rr']:.1f}\n"
@@ -270,7 +256,8 @@ def scan_for_new_trades():
         send_telegram(msg)
         
         db[best['symbol']] = {
-            "entry_price": best['entry'], "safe_zone": best['entry'], "stop_loss": best['sl'],
+            "entry_price": best['entry'], "safe_zone": best['entry'], 
+            "stop_loss": best['sl'], # Now a 20% drop
             "took_profit_10": False, "took_profit_50": False
         }
         save_json(DB_FILE, db)
