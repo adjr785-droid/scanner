@@ -3,7 +3,7 @@ import json
 import os
 import time
 
-TOKEN = "9171870506:AAFvZn7HBBtnhIkJ2fFfvr1cB6JRWwPepic"
+TOKEN = "8454321500:AAEvPTzweTWBnlpqFleNTOKXXylRSiuLuU0"
 CHAT_ID = "8902758637" 
 DB_FILE = "positions.json"
 STATE_FILE = "tg_state.json"
